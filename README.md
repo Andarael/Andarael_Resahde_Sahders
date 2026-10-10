@@ -26,3 +26,10 @@ With REST, put the three in the same group. Exposure is metered automatically (`
 Pixels the effects did not touch come back bit-exact.
 
 License: MIT (see the file header).
+
+### [RD Gamma + RCAS](shaders/RD_GammaRCAS.fx)
+
+Power gamma correction followed by RCAS sharpening, in one technique.
+Made for displays with a pure power gamma of 2.0 (Steam Deck OLED): the image is re-encoded so it looks like gamma 2.2 (`Target Gamma`, 2.4 for cinema), then sharpened.
+
+RCAS is AMD FidelityFX Robust Contrast Adaptive Sharpening, based on Lilium's implementation. Sharpness, contrast adaptation and noise removal are adjustable, and both stages can be toggled.
