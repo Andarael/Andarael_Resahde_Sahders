@@ -1,229 +1,283 @@
-// LICENSE
-// =======
-// Copyright (c) 2017-2019 Advanced Micro Devices, Inc. All rights reserved.
-// -------
-// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation
-// files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy,
-// modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-// -------
-// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
-// Software.
-// -------
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
-// WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE
+/*
+    CAS_depth: AMD FidelityFX Contrast Adaptive Sharpening (sharpen only) that fades with depth,
+    so the foreground is sharpened and the background is left alone.
 
-//Initial port to ReShade: SLSNe	https://gist.github.com/SLSNe/bbaf2d77db0b2a2a0755df581b3cf00c
+    Rewritten from Lilium's CAS (lilium__cas_hdr.fx, https://github.com/EndlesslyFlowering/ReShade_HDR_shaders):
+    - RGB mode sharpens in linear light: SDR is decoded with a power gamma, scRGB and HDR10 are
+      converted to linear BT.2020 normalised to 10000 nits.
+    - Luminance mode sharpens the luminance only and scales the pixel by the result, so colours
+      do not shift.
+    The colour space is taken from ReShade (BUFFER_COLOR_SPACE). Force it with CAS_DEPTH_COLOUR_SPACE
+    (1 = SDR, 2 = scRGB, 3 = HDR10). CAS_DEPTH_SDR_GAMMA sets the SDR decoding gamma.
 
-//Optimizations by Marty McFly:
-//	vectorized math, even with scalar gcn hardware this should work
-//	out the same, order of operations has not changed
-//	For some reason, it went from 64 to 48 instructions, a lot of MOV gone
-//	Also modified the way the final window is calculated
-//	  
-//	reordered min() and max() operations, from 11 down to 9 registers	
-//
-//	restructured final weighting, 49 -> 48 instructions
-//
-//	delayed RCP to replace SQRT with RSQRT
-//
-//	removed the saturate() from the control var as it is clamped
-//	by UI manager already, 48 -> 47 instructions
-//
-//	replaced tex2D with tex2Doffset intrinsic (address offset by immediate integer)
-//	47 -> 43 instructions
-//	9 -> 8 registers
+    Depth: the sharpening weight is multiplied by 1 - DepthControl * d^2, d = linear depth ^ DepthLinearity.
+    DepthControl = 0 skips the depth read.
 
-//Further modified by OopyDoopy and Lord of Lunacy:
-//	Changed wording in the UI for the existing variable and added a new variable and relevant code to adjust sharpening strength.
+    Copyright (c) 2024-2026 Andarael
+    License: GPL-3.0 (see LICENSES/GPL-3.0.txt), as a derivative of Lilium's shaders.
 
-//Fix by Lord of Lunacy:
-//	Made the shader use a linear colorspace rather than sRGB, as recommended by the original AMD documentation from FidelityFX.
+    The CAS algorithm is part of the FidelityFX SDK:
+    Copyright (C) 2023 Advanced Micro Devices, Inc.
 
-//Modified by CeeJay.dk:
-//	Included a label and tooltip description. I followed AMDs official naming guidelines for FidelityFX.
-//
-//	Used gather trick to reduce the number of texture operations by one (9 -> 8). It's now 42 -> 51 instructions but still faster
-//	because of the texture operation that was optimized away.
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
 
-//Fix by CeeJay.dk
-//	Fixed precision issues with the gather at super high resolutions
-//	Also tried to refactor the samples so more work can be done while they are being sampled, but it's not so easy and the gains
-//	I'm seeing are so small they might be statistical noise. So it MIGHT be faster - no promises.
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
 
-// Modified by Andarael
-//	Added a depth factor to the sharpening to reduce the effect on distant objects
-//	Added a toggle to display the depth factor for debugging purposes
-//	Added a toggle to enable or disable depth filtering if depth-based adjustments are not required
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
+*/
 
-uniform float Contrast <
-	ui_type = "drag";
-	ui_label = "Contrast Adaptation";
-	ui_tooltip = "Adjusts the range the shader adapts to high contrast (0 is not all the way off).  Higher values = more high contrast sharpening.";
-	ui_min = 0.0; ui_max = 1.0;
-> = 1.0;
+#include "ReShade.fxh"
 
-uniform float Sharpening <
-	ui_type = "drag";
-	ui_label = "Sharpening intensity";
-	ui_tooltip = "Adjusts sharpening intensity by averaging the original pixels to the sharpened result.  1.0 is the unmodified default.";
-	ui_min = 0.0; ui_max = 1.0;
-> = 0.7;
+#ifndef CAS_DEPTH_COLOUR_SPACE
+    #if (BUFFER_COLOR_SPACE == 2)
+        #define CAS_DEPTH_COLOUR_SPACE 2
+    #elif (BUFFER_COLOR_SPACE == 3)
+        #define CAS_DEPTH_COLOUR_SPACE 3
+    #else
+        #define CAS_DEPTH_COLOUR_SPACE 1
+    #endif
+#endif
+
+#ifndef CAS_DEPTH_SDR_GAMMA
+    #define CAS_DEPTH_SDR_GAMMA 2.2
+#endif
+
+uniform bool LuminanceMode <
+    ui_label = "Luminance mode";
+    ui_tooltip = "Sharpen the luminance instead of each RGB channel. Avoids colour shifts on edges.";
+> = true;
+
+uniform float SharpenAmount <
+    ui_type = "drag"; ui_min = 0.0; ui_max = 0.2; ui_step = 0.001;
+    ui_label = "Sharpness amount";
+> = 0.1;
 
 uniform float DepthControl <
-    ui_type = "drag";
-    ui_label = "Depth Control";
-    ui_tooltip = "Controls sharpening intensity based on depth. Higher values decrease the effect on distant objects.";
-    ui_min = 0.0; ui_max = 2.0;
+    ui_type = "drag"; ui_min = 0.0; ui_max = 2.0; ui_step = 0.01;
+    ui_label = "Depth control";
+    ui_tooltip = "How much sharpening fades with distance. 0 = same sharpening everywhere (depth is not read).";
 > = 0.7;
 
 uniform float DepthLinearity <
-	ui_type = "drag";
-	ui_label = "Depth Linearity";
-	ui_tooltip = "Controls the linearity of the depth factor. Higher values make the depth factor more linear.";
-	ui_min = 0.1; ui_max = 3.0;
+    ui_type = "drag"; ui_min = 0.1; ui_max = 3.0; ui_step = 0.01;
+    ui_label = "Depth linearity";
+    ui_tooltip = "Exponent applied to the depth. Higher values keep the near and mid range sharp and push the fade into the distance.";
 > = 2.0;
 
-uniform bool EnableDepthFiltering <
-    ui_type = "checkbox";
-    ui_label = "Enable Depth Filtering";
-    ui_tooltip = "Toggles depth-based sharpening. Disable to improve performance if depth-based adjustments are not required.";
-> = true;
-
 uniform bool DisplayDepthFactor <
-	ui_type = "checkbox";
-	ui_label = "Display Depth Factor";
-	ui_tooltip = "Toggles the display of the depth factor. This is useful for debugging and understanding how the depth-based sharpening is affecting the image.";
+    ui_label = "Display depth factor";
+    ui_tooltip = "Shows the sharpening multiplier: white = full sharpening, black = none.";
 > = false;
 
+#define MIN3(a, b, c) min(min(a, b), c)
+#define MAX3(a, b, c) max(max(a, b), c)
 
-#include "ReShade.fxh"
-#define pixel float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT)
+static const int2 MAX_POS = int2(BUFFER_WIDTH - 1, BUFFER_HEIGHT - 1);
 
-texture TexColor : COLOR;
-sampler sTexColor {Texture = TexColor; SRGBTexture = true;};
+// --- Colour space: everything is processed in a [0, 1] working range -----------------------------
 
-float3 CASPass(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
-{	
-	// fetch a 3x3 neighborhood around the pixel 'e',
-	//  a b c
-	//  d(e)f
-	//  g h i
-	
+static const float SCRGB_TO_NORM = 80.0 / 10000.0; // scRGB 1.0 = 80 nits, PQ 1.0 = 10000 nits
 
-	float3 b = tex2Doffset(sTexColor, texcoord, int2(0, -1)).rgb;
-	float3 d = tex2Doffset(sTexColor, texcoord, int2(-1, 0)).rgb;
-	
- 
-#if __RENDERER__ >= 0xa000 // If DX10 or higher
-	float4 red_efhi = tex2DgatherR(sTexColor, texcoord + 0.5 * pixel);
-	
-	float3 e = float3( red_efhi.w, red_efhi.w, red_efhi.w);
-	float3 f = float3( red_efhi.z, red_efhi.z, red_efhi.z);
-	float3 h = float3( red_efhi.x, red_efhi.x, red_efhi.x);
-	float3 i = float3( red_efhi.y, red_efhi.y, red_efhi.y);
-	
-	float4 green_efhi = tex2DgatherG(sTexColor, texcoord + 0.5 * pixel);
-	
-	e.g = green_efhi.w;
-	f.g = green_efhi.z;
-	h.g = green_efhi.x;
-	i.g = green_efhi.y;
-	
-	float4 blue_efhi = tex2DgatherB(sTexColor, texcoord + 0.5 * pixel);
-	
-	e.b = blue_efhi.w;
-	f.b = blue_efhi.z;
-	h.b = blue_efhi.x;
-	i.b = blue_efhi.y;
+static const float3x3 BT709_TO_BT2020 = float3x3(
+    0.6274040, 0.3292820, 0.0433136,
+    0.0690970, 0.9195400, 0.0113612,
+    0.0163916, 0.0880132, 0.8955950);
 
+static const float3x3 BT2020_TO_BT709 = float3x3(
+     1.6604910, -0.5876411, -0.0728499,
+    -0.1245505,  1.1328999, -0.0083494,
+    -0.0181508, -0.1005789,  1.1187297);
 
-#else // If DX9
-	float3 e = tex2D(sTexColor, texcoord).rgb;
-	float3 f = tex2Doffset(sTexColor, texcoord, int2(1, 0)).rgb;
+static const float3 BT709_Y  = float3(0.2126, 0.7152, 0.0722);
+static const float3 BT2020_Y = float3(0.2627, 0.6780, 0.0593);
 
-	float3 h = tex2Doffset(sTexColor, texcoord, int2(0, 1)).rgb;
-	float3 i = tex2Doffset(sTexColor, texcoord, int2(1, 1)).rgb;
+static const float PQ_M1 = 0.1593017578125;
+static const float PQ_M2 = 78.84375;
+static const float PQ_C1 = 0.8359375;
+static const float PQ_C2 = 18.8515625;
+static const float PQ_C3 = 18.6875;
 
-#endif
-
-	float3 g = tex2Doffset(sTexColor, texcoord, int2(-1, 1)).rgb; 
-	float3 a = tex2Doffset(sTexColor, texcoord, int2(-1, -1)).rgb;
-	float3 c = tex2Doffset(sTexColor, texcoord, int2(1, -1)).rgb;
-   
-
-	// Soft min and max.
-	//  a b c			 b
-	//  d e f * 0.5  +  d e f * 0.5
-	//  g h i			 h
-	// These are 2.0x bigger (factored out the extra multiply).
-	float3 mnRGB = min(min(min(d, e), min(f, b)), h);
-	float3 mnRGB2 = min(mnRGB, min(min(a, c), min(g, i)));
-	mnRGB += mnRGB2;
-
-	float3 mxRGB = max(max(max(d, e), max(f, b)), h);
-	float3 mxRGB2 = max(mxRGB, max(max(a, c), max(g, i)));
-	mxRGB += mxRGB2;
-
-	// Smooth minimum distance to signal limit divided by smooth max.
-	float3 rcpMRGB = rcp(mxRGB);
-	float3 ampRGB = saturate(min(mnRGB, 2.0 - mxRGB) * rcpMRGB);	
-	
-	// Shaping amount of sharpening.
-	ampRGB = rsqrt(ampRGB);
-	
-	float peak = -3.0 * Contrast + 8.0;
-	float3 wRGB = -rcp(ampRGB * peak);
-
-	float3 rcpWeightRGB = rcp(4.0 * wRGB + 1.0);
-
-	//						  0 w 0
-	//  Filter shape:		   w 1 w
-	//						  0 w 0  
-	float3 window = (b + d) + (f + h);
-	float3 outColor = saturate((window * wRGB + e) * rcpWeightRGB);
-
-    // Initialize depthFactor to 1.0 for default behavior (no depth-based adjustment)
-    float depthFactor = 1.0;
-
-    // Only fetch and use depth if depth filtering is enabled
-    if (EnableDepthFiltering && DepthControl > 0.0)
-    {
-		float depth = ReShade::GetLinearizedDepth(texcoord);
-		depth = pow(depth, DepthLinearity);
-        depthFactor = lerp(1.0, 1.0 - depth * DepthControl, depth);
-		depthFactor = saturate(depthFactor);
-	}
-
-	if (DisplayDepthFactor)
-	{
-		return float3(depthFactor, depthFactor, depthFactor);
-	}
-
-	// Adjust the final output color by the depth factor and sharpening
-	return lerp(e, outColor, Sharpening * depthFactor);
+float3 PqToLinear(float3 e)
+{
+    float3 p = pow(saturate(e), rcp(PQ_M2));
+    return pow(max(p - PQ_C1, 0.0) / (PQ_C2 - PQ_C3 * p), rcp(PQ_M1));
 }
 
-technique ContrastAdaptiveSharpen
-	<
-	ui_label = "CAS + Depth AMD FidelityFX";
-	ui_tooltip = 
-    "This version of CAS has a depth control variable that allows you to adjust the sharpening intensity based on depth.\n"
-	"CAS is a low overhead adaptive sharpening algorithm that AMD includes with their drivers.\n"
-	"This port to Reshade works with all cards from all vendors,\n"
-	"but cannot do the optional scaling that CAS is normally also capable of when activated in the AMD drivers.\n"
-	"\n"
-	"The algorithm adjusts the amount of sharpening per pixel to target an even level of sharpness across the image.\n"
-	"Areas of the input image that are already sharp are sharpened less, while areas that lack detail are sharpened more.\n"
-	"This allows for higher overall natural visual sharpness with fewer artifacts.";
-	>
+float3 LinearToPq(float3 l)
 {
-	pass
-	{
-		VertexShader = PostProcessVS;
-		PixelShader = CASPass;
-		SRGBWriteEnable = true;
-	}
+    float3 y = pow(max(l, 0.0), PQ_M1);
+    return pow((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y), PQ_M2);
+}
+
+// RGB mode: back buffer -> linear working space and back.
+float3 RgbToWorking(float3 c)
+{
+#if (CAS_DEPTH_COLOUR_SPACE == 2)
+    return mul(BT709_TO_BT2020, c * SCRGB_TO_NORM);
+#elif (CAS_DEPTH_COLOUR_SPACE == 3)
+    return PqToLinear(c);
+#else
+    return pow(saturate(c), CAS_DEPTH_SDR_GAMMA);
+#endif
+}
+
+float3 RgbFromWorking(float3 c)
+{
+#if (CAS_DEPTH_COLOUR_SPACE == 2)
+    return mul(BT2020_TO_BT709, c) / SCRGB_TO_NORM;
+#elif (CAS_DEPTH_COLOUR_SPACE == 3)
+    return LinearToPq(c);
+#else
+    return pow(saturate(c), rcp(CAS_DEPTH_SDR_GAMMA));
+#endif
+}
+
+// Luminance mode: like Lilium, SDR works on the encoded signal, HDR on linear light.
+float3 LumModeDecode(float3 c)
+{
+#if (CAS_DEPTH_COLOUR_SPACE == 3)
+    return PqToLinear(c);
+#else
+    return c;
+#endif
+}
+
+float LumModeLuminance(float3 c)
+{
+#if (CAS_DEPTH_COLOUR_SPACE == 2)
+    return dot(c, BT709_Y) * SCRGB_TO_NORM;
+#elif (CAS_DEPTH_COLOUR_SPACE == 3)
+    return dot(c, BT2020_Y);
+#else
+    return dot(c, BT709_Y);
+#endif
+}
+
+float3 LumModeEncode(float3 c)
+{
+#if (CAS_DEPTH_COLOUR_SPACE == 3)
+    return LinearToPq(c);
+#else
+    return c;
+#endif
+}
+
+// --- CAS --------------------------------------------------------------------------------------
+
+float3 Fetch(int2 pos, int2 offset)
+{
+    return tex2Dfetch(ReShade::BackBuffer, clamp(pos + offset, 0, MAX_POS)).rgb;
+}
+
+// Soft min/max over the cross plus the corners, then the CAS amplification.
+//  a b c
+//  d e f
+//  g h i
+// The sums are 2x bigger (factored out the extra multiply), hence the 2 - max.
+#define CAS_AMPLIFY(T, a, b, c, d, e, f, g, h, i)               \
+    T mn = MIN3(MIN3(d, e, f), b, h);                           \
+    T mx = MAX3(MAX3(d, e, f), b, h);                           \
+    mn += MIN3(MIN3(mn, a, c), g, i);                           \
+    mx += MAX3(MAX3(mx, a, c), g, i);                           \
+    T amplify = sqrt(saturate(min(mn, 2.0 - mx) * rcp(mx)));
+
+float GetDepthFactor(float2 texcoord)
+{
+    if (DepthControl <= 0.0)
+        return 1.0;
+
+    float d = pow(ReShade::GetLinearizedDepth(texcoord), DepthLinearity);
+    return saturate(1.0 - DepthControl * d * d);
+}
+
+float4 PS_CasDepth(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
+{
+    float depthFactor = GetDepthFactor(texcoord);
+
+    if (DisplayDepthFactor)
+        return float4(depthFactor.xxx, 1.0);
+
+    int2 pos = int2(vpos.xy);
+
+    float4 eFull = tex2Dfetch(ReShade::BackBuffer, pos);
+
+    float3 a = Fetch(pos, int2(-1, -1));
+    float3 b = Fetch(pos, int2( 0, -1));
+    float3 c = Fetch(pos, int2( 1, -1));
+    float3 d = Fetch(pos, int2(-1,  0));
+    float3 e = eFull.rgb;
+    float3 f = Fetch(pos, int2( 1,  0));
+    float3 g = Fetch(pos, int2(-1,  1));
+    float3 h = Fetch(pos, int2( 0,  1));
+    float3 i = Fetch(pos, int2( 1,  1));
+
+    float peak = -SharpenAmount * depthFactor;
+
+    float3 output;
+
+    [branch]
+    if (LuminanceMode)
+    {
+        e = LumModeDecode(e);
+
+        float aL = LumModeLuminance(LumModeDecode(a));
+        float bL = LumModeLuminance(LumModeDecode(b));
+        float cL = LumModeLuminance(LumModeDecode(c));
+        float dL = LumModeLuminance(LumModeDecode(d));
+        float eL = LumModeLuminance(e);
+        float fL = LumModeLuminance(LumModeDecode(f));
+        float gL = LumModeLuminance(LumModeDecode(g));
+        float hL = LumModeLuminance(LumModeDecode(h));
+        float iL = LumModeLuminance(LumModeDecode(i));
+
+        CAS_AMPLIFY(float, aL, bL, cL, dL, eL, fL, gL, hL, iL)
+
+        // Filter shape:
+        //  0 w 0
+        //  w 1 w
+        //  0 w 0
+        float w = amplify * peak;
+        float outL = ((bL + dL + fL + hL) * w + eL) * rcp(4.0 * w + 1.0);
+
+        output = LumModeEncode(max(outL / max(eL, 1e-7), 0.0) * e);
+    }
+    else
+    {
+        a = RgbToWorking(a); b = RgbToWorking(b); c = RgbToWorking(c);
+        d = RgbToWorking(d); e = RgbToWorking(e); f = RgbToWorking(f);
+        g = RgbToWorking(g); h = RgbToWorking(h); i = RgbToWorking(i);
+
+        CAS_AMPLIFY(float3, a, b, c, d, e, f, g, h, i)
+
+        float3 w = amplify * peak;
+        output = RgbFromWorking(max(((b + d + f + h) * w + e) * rcp(4.0 * w + 1.0), 0.0));
+    }
+
+    return float4(output, eFull.a);
+}
+
+technique ContrastAdaptiveSharpen <
+    ui_label = "CAS + Depth AMD FidelityFX";
+    ui_tooltip = "AMD FidelityFX Contrast Adaptive Sharpening, rewritten from Lilium's version.\n"
+                 "Works in SDR, scRGB and HDR10. Sharpening fades with depth (Depth control).\n"
+                 "Areas that are already sharp are sharpened less, flat areas more.";
+>
+{
+    pass
+    {
+        VertexShader = PostProcessVS;
+        PixelShader = PS_CasDepth;
+    }
 }
