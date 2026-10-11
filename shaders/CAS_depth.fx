@@ -60,9 +60,10 @@ uniform bool LuminanceMode <
 > = true;
 
 uniform float SharpenAmount <
-    ui_type = "drag"; ui_min = 0.0; ui_max = 0.2; ui_step = 0.001;
+    ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
     ui_label = "Sharpness amount";
-> = 0.14;
+    ui_tooltip = "0 = off, 1 = maximum (AMD's strongest setting).";
+> = 0.7;
 
 uniform float DepthControl <
     ui_type = "drag"; ui_min = 0.0; ui_max = 2.0; ui_step = 0.01;
@@ -83,6 +84,9 @@ uniform bool DisplayDepthFactor <
 
 #define MIN3(a, b, c) min(min(a, b), c)
 #define MAX3(a, b, c) max(max(a, b), c)
+
+// Lilium's CAS takes the peak directly in [0, 0.2], AMD's strongest is 0.2.
+static const float MAX_PEAK = 0.2;
 
 static const int2 MAX_POS = int2(BUFFER_WIDTH - 1, BUFFER_HEIGHT - 1);
 
@@ -223,7 +227,7 @@ float4 PS_CasDepth(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_T
     float3 h = Fetch(pos, int2( 0,  1));
     float3 i = Fetch(pos, int2( 1,  1));
 
-    float peak = -SharpenAmount * depthFactor;
+    float peak = -SharpenAmount * MAX_PEAK * depthFactor;
 
     float3 output;
 

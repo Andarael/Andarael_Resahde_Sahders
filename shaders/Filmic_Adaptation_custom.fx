@@ -3,7 +3,8 @@
     Author      : prod80 (Bas Veth)
     License     : MIT, Copyright (c) 2020 prod80
 
-    Modified by Andarael: technique renamed from prod80_03_FilmicTonemap to FilmicTonemap.
+    Modified by Andarael: technique renamed from prod80_03_FilmicTonemap to FilmicTonemap,
+    added an Intensity slider that blends the tonemapped image with the original.
 
     Additional credits
     - Padraic Hennessy for the logic
@@ -43,6 +44,14 @@
 namespace pd80_filmicadaptation
 {
     //// UI ELEMENTS ////////////////////////////////////////////////////////////////
+    uniform float intensity <
+        ui_label = "Intensity";
+        ui_tooltip = "Blend between the original image (0) and the full effect (1)";
+        ui_category = "Tonemapping";
+        ui_type = "slider";
+        ui_min = 0.0;
+        ui_max = 1.0;
+        > = 1.0;
     uniform float adj_shoulder <
     	ui_label = "Adjust Highlights";
         ui_tooltip = "Adjust Highlights";
@@ -131,7 +140,7 @@ namespace pd80_filmicadaptation
         float luma       = tex2D( samplerAvgLuma, float2( 0.5f, 0.5f )).x;
         float exp        = lerp( 1.0f, 8.0f, luma ); // Increase Toe when brightness goes up (increase contrast)
         float toe        = max( D * exp, D ); // Increase toe, effect is mild even though there's a potential 8x increase here
-        color.xyz        = Filmic( color.xyz, A, B, C, toe, E, F, W );
+        color.xyz        = lerp( color.xyz, Filmic( color.xyz, A, B, C, toe, E, F, W ), intensity );
 
         return float4( color.xyz, 1.0f );
     }

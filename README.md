@@ -52,7 +52,7 @@ luluco250's Light Depth of Field with only the far blur technique (auto focus an
 
 ### [Filmic Adaptation](shaders/Filmic_Adaptation_custom.fx)
 
-prod80's PD80 03 Filmic Adaptation, technique renamed to `FilmicTonemap`. License: MIT.
+prod80's PD80 03 Filmic Adaptation with an `Intensity` slider (0 = original image, 1 = full effect). Technique renamed to `FilmicTonemap`. License: MIT.
 
 ## Licenses
 
