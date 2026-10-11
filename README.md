@@ -36,7 +36,7 @@ License: MIT (see the file header).
 Power gamma correction followed by RCAS sharpening, in one technique.
 Made for displays with a pure power gamma of 2.0 (Steam Deck OLED): the image is re-encoded so it looks like gamma 2.2 (`Target Gamma`, 2.4 for cinema), then sharpened.
 
-RCAS is AMD FidelityFX Robust Contrast Adaptive Sharpening, based on Lilium's implementation. Sharpness, contrast adaptation and noise removal are adjustable, and both stages can be toggled.
+RCAS is AMD FidelityFX Robust Contrast Adaptive Sharpening, based on Lilium's implementation. Sharpness and noise removal are adjustable (the Contrast Adaptation slider has no effect), and both stages can be toggled.
 
 License: GPL-3.0.
 
@@ -48,7 +48,7 @@ brussell's EyeAdaption with Darken Highlights / Midtones / Shadows set to 0 by d
 
 ### [Light DoF, far only](shaders/LightDofFarOnly.fx)
 
-luluco250's Light Depth of Field with only the far blur technique (auto focus and near blur removed). License: CC BY-SA 4.0.
+luluco250's Light Depth of Field with only the far blur technique (auto focus and near blur commented out). License: CC BY-SA 4.0.
 
 ### [Filmic Adaptation](shaders/Filmic_Adaptation_custom.fx)
 

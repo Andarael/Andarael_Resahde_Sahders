@@ -62,7 +62,7 @@ uniform bool LuminanceMode <
 uniform float SharpenAmount <
     ui_type = "drag"; ui_min = 0.0; ui_max = 0.2; ui_step = 0.001;
     ui_label = "Sharpness amount";
-> = 0.1;
+> = 0.14;
 
 uniform float DepthControl <
     ui_type = "drag"; ui_min = 0.0; ui_max = 2.0; ui_step = 0.01;
