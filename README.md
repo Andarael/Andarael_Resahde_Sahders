@@ -10,6 +10,23 @@ Place the shaders and textures files in your `reshade-shaders/Shaders` and `resh
 
 ## Shaders
 
+### [Andarael Expose](shaders/Andarael_Expose.fx)
+
+Changes the exposure of the final image without clipping or flattening the highlights.
+The frame is expanded back to an HDR-like signal with the inverse of a tone curve, exposed, then compressed with the tone curve again. With the same curve both ways, 0 EV leaves the image unchanged, and the curve decides how highlights and shadows respond when you push the exposure.
+
+- **Tone curves:** Linear (clip), Reinhard, Hable (Uncharted 2), ACES (Hill fit), AgX, Khronos PBR Neutral. Linear, Reinhard and Hable can run per channel, on luminance (keeps saturation) or on the max channel (keeps hue).
+- **Highlight headroom:** how far near-white highlights are expanded (in stops).
+- **Channel crosstalk:** saturated highlights desaturate towards white when pushed instead of clipping per channel (0 = off).
+- **Expansion:** inverse of the tone curve (default), inverse of another curve (re-tonemaps the image), or none for linear buffers that were not tone mapped yet.
+- **Auto exposure** (off by default): centre-weighted metering, adaptation amount, min/max EV, separate speeds towards bright and dark.
+- **Dither** (on by default).
+
+Works in SDR, scRGB and HDR10 (colour space from ReShade; force it with `ANDARAEL_EXPOSE_COLOUR_SPACE`). In HDR, set `Peak brightness` to the game's peak.
+The idea of exposing in an inverse tone mapped space comes from Marty McFly's SOLARIS; no code from it is used.
+
+License: MIT.
+
 ### [CAS with Depth](shaders/CAS_depth.fx)
 
 AMD FidelityFX Contrast Adaptive Sharpening that fades with distance: the foreground is sharpened, the background is left alone.
