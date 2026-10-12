@@ -24,7 +24,7 @@ Adjusts the exposure of the image like a camera would: highlights roll off smoot
 Works in SDR, scRGB and HDR10 (colour space from ReShade; force it with `ANDARAEL_EXPOSE_COLOUR_SPACE`). In HDR, set `Peak brightness` to the game's peak.
 The idea of exposing in an inverse tone mapped space comes from Marty McFly's SOLARIS; no code from it is used.
 
-License: MIT.
+License: MIT, except the Khronos PBR Neutral part (Apache-2.0).
 
 ### [CAS with Depth](shaders/CAS_depth.fx)
 
@@ -72,4 +72,4 @@ prod80's PD80 03 Filmic Adaptation with an `Intensity` slider (0 = original imag
 
 ## Licenses
 
-Each shader states its license in its header. GPL-3.0 text: [LICENSES/GPL-3.0.txt](LICENSES/GPL-3.0.txt).
+Each shader states its license in its header. Full texts: [GPL-3.0](LICENSES/GPL-3.0.txt), [Apache-2.0](LICENSES/Apache-2.0.txt).

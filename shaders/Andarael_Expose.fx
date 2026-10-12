@@ -35,15 +35,40 @@
     The idea of exposing in an inverse tone mapped space comes from Pascal Gilcher's SOLARIS.
     No code from it is used.
 
-    Curve credits:
+    Curve sources (the inverses are derived here):
       - Hable filmic curve: John Hable, "Filmic Tonemapping Operators" (2010).
-      - ACES fit: Stephen Hill (@self_shadow), as published in MJP's Baking Lab (MIT).
-      - AgX: polynomial sigmoid fit by Benjamin Wrensch ("Minimal AgX implementation"),
-        inset/outset matrices and log range as in three.js (MIT), derived from Filament / Blender.
-      - Khronos PBR Neutral: Khronos Group (github.com/KhronosGroup/ToneMapping).
-    The inverses are derived here.
+      - ACES fit: Stephen Hill (@self_shadow), from MJP's Baking Lab (MIT, notice below).
+      - AgX: polynomial sigmoid fit (Benjamin Wrensch), inset/outset matrices and log range,
+        from three.js (MIT, notice below).
+      - Khronos PBR Neutral: NeutralDesat, NeutralFwd and NeutralInv are adapted from
+        github.com/KhronosGroup/ToneMapping, Copyright 2024 The Khronos Group Inc.,
+        licensed under the Apache License 2.0 (see LICENSES/Apache-2.0.txt).
+        Changes: split into a desaturation weight and a reversible part, a parameter that lowers
+        the desaturation, inverse added.
 
-    MIT License - Copyright (c) 2026 Andarael
+    License: MIT, except the Khronos PBR Neutral functions (Apache-2.0, see above).
+
+    Copyright (c) 2026 Andarael
+    Copyright (c) 2016 MJP
+    Copyright (c) 2010-2026 three.js authors
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
 */
 
 #include "ReShade.fxh"
@@ -448,6 +473,7 @@ float3 AgxInv(float3 y)
 }
 
 // Khronos PBR Neutral, split so the invertible part can be undone.
+// Adapted from Khronos Group code, Apache-2.0 (see the header and LICENSES/Apache-2.0.txt).
 static const float NEUTRAL_START = 0.76;
 static const float NEUTRAL_D = 0.24;
 static const float NEUTRAL_DESAT = 0.15;
