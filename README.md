@@ -12,8 +12,7 @@ Place the shaders and textures files in your `reshade-shaders/Shaders` and `resh
 
 ### [Andarael Expose](shaders/Andarael_Expose.fx)
 
-Changes the exposure of the final image without clipping or flattening the highlights.
-The frame is expanded back to an HDR-like signal with the inverse of a tone curve, exposed, then compressed with the tone curve again. With the same curve both ways, 0 EV leaves the image unchanged, and the curve decides how highlights and shadows respond when you push the exposure.
+Adjusts the exposure of the image like a camera would: highlights roll off smoothly instead of clipping. At 0 EV the image is unchanged.
 
 - **Tone curves:** Linear (clip), Reinhard, Hable (Uncharted 2), ACES (Hill fit), AgX, Khronos PBR Neutral. Linear, Reinhard and Hable can run per channel, on luminance (keeps saturation) or on the max channel (keeps hue).
 - **Highlight headroom:** how far near-white highlights are expanded (in stops).
